@@ -42,9 +42,3 @@ func normalize(s string) string {
 	out := b.String()
 	return strings.Trim(out, "_")
 }
-
-// func replace(basename string) string {
-// 	reg := regexp.MustCompile(`[^a-z0-9]+`)
-// 	output := reg.ReplaceAll([]byte(basename), []byte("_"))
-// 	return string(output)
-// }
