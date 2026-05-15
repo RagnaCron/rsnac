@@ -11,11 +11,13 @@ type Config struct {
 }
 
 func Load() (*Config, error) {
-	if len(os.Args[1:]) != 1 {
-		return &Config{}, fmt.Errorf("error: you need to pass 1 argument, got: %d", len(os.Args[1:]))
+	args := os.Args[1:]
+
+	if len(args) != 1 {
+		return nil, fmt.Errorf("expected exactly 1 argument, got %d", len(args))
 	}
 
 	return &Config{
-		Path: os.Args[1],
+		Path: args[0],
 	}, nil
 }
