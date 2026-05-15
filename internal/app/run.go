@@ -7,6 +7,6 @@ import (
 	"github.com/RagnaCron/rsnac/internal/config"
 )
 
-func Run(path string, cfg config.Config) error {
+func Run(root string, cfg *config.Config) error {
 	return errors.New("not implemented")
 }
