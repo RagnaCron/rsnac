@@ -1,3 +1,3 @@
-module github.com/ragnacron/rsnac
+module github.com/RagnaCron/rsnac
 
 go 1.26.2
