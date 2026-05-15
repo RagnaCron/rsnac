@@ -13,6 +13,11 @@ func ToSnakeCase(filename string) string {
 	return normalize(s) + ext
 }
 
+func ToSnakeCaseDir(dirname string) string {
+	lower := strings.ToLower(dirname)
+	return normalize(lower)
+}
+
 func normalize(s string) string {
 	var b strings.Builder
 	b.Grow(len(s))
