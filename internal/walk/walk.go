@@ -4,19 +4,29 @@ package walk
 import (
 	"errors"
 	"fmt"
-	"log"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"strings"
 
 	"github.com/RagnaCron/rsnac/internal/config"
 	"github.com/RagnaCron/rsnac/internal/normalize"
+	"github.com/RagnaCron/rsnac/internal/rename"
+)
+
+type Type string
+
+const (
+	FILE Type = "FILE"
+	LINK Type = "LINK"
+	DIR  Type = "DIR"
 )
 
 type RenamePlan struct {
-	Type    string
+	Type    Type
 	OldPath string
 	NewPath string
+	Valid   bool
 }
 
 func ProcessDir(root string, cfg *config.Config) error {
@@ -27,15 +37,17 @@ func ProcessDir(root string, cfg *config.Config) error {
 
 	plans := buildRenamePlans(root, entries)
 
-	valid, err := validatePlans(plans)
+	err = validatePlans(plans)
 	if err != nil {
 		return err
 	}
 
-	dirs, err := executePlans(valid, cfg)
+	err = executePlans(plans, cfg)
 	if err != nil {
 		return err
 	}
+
+	dirs := collectDirs(plans, cfg)
 
 	for _, path := range dirs {
 		err := ProcessDir(path, cfg)
@@ -47,9 +59,7 @@ func ProcessDir(root string, cfg *config.Config) error {
 	return nil
 }
 
-func buildRenamePlans(root string, entries []os.DirEntry) []RenamePlan {
-	plans := make([]RenamePlan, 0, len(entries))
-
+func buildRenamePlans(root string, entries []os.DirEntry) (plans []RenamePlan) {
 	for _, entry := range entries {
 		oldName := entry.Name()
 
@@ -59,19 +69,18 @@ func buildRenamePlans(root string, entries []os.DirEntry) []RenamePlan {
 
 		var (
 			newName string
-			typ     string
+			typ     Type
 		)
 
 		if entry.IsDir() {
 			newName = normalize.ToSnakeCaseDir(oldName)
-			typ = "dir"
+			typ = DIR
+		} else if entry.Type()&fs.ModeSymlink != 0 {
+			newName = normalize.ToSnakeCase(oldName)
+			typ = LINK
 		} else {
 			newName = normalize.ToSnakeCase(oldName)
-			typ = "file"
-		}
-
-		if newName == oldName {
-			continue
+			typ = FILE
 		}
 
 		plans = append(plans, RenamePlan{
@@ -84,37 +93,56 @@ func buildRenamePlans(root string, entries []os.DirEntry) []RenamePlan {
 	return plans
 }
 
-func validatePlans(plans []RenamePlan) ([]RenamePlan, error) {
-	valid := make([]RenamePlan, 0, len(plans))
+func validatePlans(plans []RenamePlan) error {
 	seen := map[string]struct{}{}
-	for _, plan := range plans {
-		_, err := os.Lstat(plan.OldPath)
-		if err != nil {
-			return nil, err
-		}
-
-		_, err = os.Lstat(plan.NewPath)
+	for i, plan := range plans {
+		_, err := os.Lstat(plan.NewPath)
 		if err == nil {
-			log.Printf("collision: %q already exists\n", plan.NewPath)
-			continue
+			return fmt.Errorf("collision: %s already exists", plan.NewPath)
 		}
 
 		if errors.Is(err, os.ErrNotExist) {
 			if _, ok := seen[plan.NewPath]; ok {
-				log.Printf("collision: %q already seen\n", plan.NewPath)
-				continue
+				return fmt.Errorf("collision: %s already seen", plan.NewPath)
 			}
 
-			valid = append(valid, plan)
+			plans[i].Valid = plan.NewPath != plan.OldPath
 			seen[plan.NewPath] = struct{}{}
 			continue
 		}
 
-		return nil, err
+		return err
 	}
-	return valid, nil
+	return nil
 }
 
-func executePlans(plans []RenamePlan, cfg *config.Config) ([]string, error) {
-	return nil, nil
+func executePlans(plans []RenamePlan, cfg *config.Config) error {
+	for _, plan := range plans {
+		if plan.Valid {
+			if !cfg.DryRun {
+				err := rename.Rename(plan.OldPath, plan.NewPath)
+				if err != nil {
+					return err
+				}
+			}
+
+			fmt.Printf("%s: %q -> %q\n", plan.Type, plan.OldPath, plan.NewPath)
+		}
+	}
+
+	return nil
+}
+
+func collectDirs(plans []RenamePlan, cfg *config.Config) []string {
+	var dirs []string
+	for _, plan := range plans {
+		if plan.Type == DIR {
+			path := plan.NewPath
+			if cfg.DryRun {
+				path = plan.OldPath
+			}
+			dirs = append(dirs, path)
+		}
+	}
+	return dirs
 }

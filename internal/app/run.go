@@ -16,7 +16,7 @@ func Run(root string, cfg *config.Config) error {
 	}
 
 	if !info.IsDir() {
-		return fmt.Errorf("root path is not a dir: %s, %w", root, err)
+		return fmt.Errorf("root path is not a dir: %s", root)
 	}
 
 	err = walk.ProcessDir(root, cfg)
