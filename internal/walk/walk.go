@@ -2,8 +2,8 @@
 package walk
 
 import (
+	"errors"
 	"fmt"
-	"io/fs"
 	"log"
 	"os"
 	"path/filepath"
@@ -11,105 +11,110 @@ import (
 
 	"github.com/RagnaCron/rsnac/internal/config"
 	"github.com/RagnaCron/rsnac/internal/normalize"
-	"github.com/RagnaCron/rsnac/internal/rename"
 )
+
+type RenamePlan struct {
+	Type    string
+	OldPath string
+	NewPath string
+}
 
 func ProcessDir(root string, cfg *config.Config) error {
 	entries, err := os.ReadDir(root)
 	if err != nil {
-		return fmt.Errorf("cound not read %s content: %w", root, err)
+		return fmt.Errorf("read dir %q: %w", root, err)
 	}
 
-	// Categorize Folder content
-	var filenames []string
-	var foldernames []string
-	var symlinks []string
+	plans := buildRenamePlans(root, entries)
 
-	for _, entry := range entries {
-		if strings.HasPrefix(entry.Name(), ".") {
-			continue // Skip hidden
-		} else if entry.Type()&fs.ModeSymlink != 0 {
-			symlinks = append(symlinks, entry.Name())
-		} else if entry.IsDir() {
-			foldernames = append(foldernames, entry.Name())
-		} else {
-			filenames = append(filenames, entry.Name())
-		}
+	valid, err := validatePlans(plans)
+	if err != nil {
+		return err
 	}
 
-	// Rename files in current dir
-	for _, oldName := range filenames {
-		newName := normalize.ToSnakeCase(oldName)
-		if newName == oldName {
-			continue
-		}
-
-		oldPath := filepath.Join(root, oldName)
-		newPath := filepath.Join(root, newName)
-
-		if !cfg.DryRun {
-			err := rename.Rename(oldPath, newPath)
-			if err != nil {
-				log.Println(err.Error())
-				continue
-			}
-		}
-
-		fmt.Printf("FILE: %s -> %s\n", oldName, newName)
+	dirs, err := executePlans(valid, cfg)
+	if err != nil {
+		return err
 	}
 
-	// Rename symlinks in current dir
-	for _, oldName := range symlinks {
-		newName := normalize.ToSnakeCase(oldName)
-		if newName == oldName {
-			continue
-		}
-
-		oldPath := filepath.Join(root, oldName)
-		newPath := filepath.Join(root, newName)
-
-		if !cfg.DryRun {
-			err := rename.Rename(oldPath, newPath)
-			if err != nil {
-				log.Println(err.Error())
-				continue
-			}
-		}
-
-		fmt.Printf("LINK: %s -> %s\n", oldName, newName)
-	}
-
-	newFolderpaths := make([]string, 0, len(foldernames))
-
-	// Rename dirs in current dir
-	for _, oldName := range foldernames {
-		newName := normalize.ToSnakeCaseDir(oldName)
-		if newName == oldName {
-			continue
-		}
-
-		oldPath := filepath.Join(root, oldName)
-		newPath := filepath.Join(root, newName)
-
-		if !cfg.DryRun {
-			err := rename.Rename(oldPath, newPath)
-			if err != nil {
-				log.Println(err.Error())
-				continue
-			}
-		}
-
-		newFolderpaths = append(newFolderpaths, newPath)
-
-		fmt.Printf("DIR: %s -> %s\n", oldName, newName)
-	}
-
-	for _, path := range newFolderpaths {
+	for _, path := range dirs {
 		err := ProcessDir(path, cfg)
 		if err != nil {
-			log.Println(err.Error())
+			return err
 		}
 	}
 
 	return nil
+}
+
+func buildRenamePlans(root string, entries []os.DirEntry) []RenamePlan {
+	plans := make([]RenamePlan, 0, len(entries))
+
+	for _, entry := range entries {
+		oldName := entry.Name()
+
+		if strings.HasPrefix(oldName, ".") {
+			continue // Skip hidden
+		}
+
+		var (
+			newName string
+			typ     string
+		)
+
+		if entry.IsDir() {
+			newName = normalize.ToSnakeCaseDir(oldName)
+			typ = "dir"
+		} else {
+			newName = normalize.ToSnakeCase(oldName)
+			typ = "file"
+		}
+
+		if newName == oldName {
+			continue
+		}
+
+		plans = append(plans, RenamePlan{
+			Type:    typ,
+			OldPath: filepath.Join(root, oldName),
+			NewPath: filepath.Join(root, newName),
+		})
+	}
+
+	return plans
+}
+
+func validatePlans(plans []RenamePlan) ([]RenamePlan, error) {
+	valid := make([]RenamePlan, 0, len(plans))
+	seen := map[string]struct{}{}
+	for _, plan := range plans {
+		_, err := os.Lstat(plan.OldPath)
+		if err != nil {
+			return nil, err
+		}
+
+		_, err = os.Lstat(plan.NewPath)
+		if err == nil {
+			log.Printf("collision: %q already exists\n", plan.NewPath)
+			continue
+		}
+
+		if errors.Is(err, os.ErrNotExist) {
+			if _, ok := seen[plan.NewPath]; ok {
+				log.Printf("collision: %q already seen\n", plan.NewPath)
+				continue
+			}
+
+			valid = append(valid, plan)
+			seen[plan.NewPath] = struct{}{}
+			continue
+		}
+
+		return nil, err
+	}
+	return valid, nil
+}
+
+func executePlans(plans []RenamePlan, cfg *config.Config) ([]string, error) {
+	return nil, nil
 }
